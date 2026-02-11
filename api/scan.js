@@ -1,8 +1,7 @@
-// /api/scan.js
 import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
 
-// 1. Silence the Node.js Deprecation Warning so we can see real errors
+// Silence warnings
 process.removeAllListeners('warning');
 
 export default async function handler(req, res) {
@@ -16,14 +15,13 @@ export default async function handler(req, res) {
   const chKey = process.env.CARD_HEDGE_API_KEY;
 
   if (!supabaseUrl || !supabaseUrl.startsWith('http')) {
-    console.error("Config Error: Invalid Supabase URL");
-    return res.status(500).json({ error: 'Configuration Error' });
+    return res.status(500).json({ error: 'Configuration Error: SUPABASE_URL missing' });
   }
 
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
-    // --- STEP 1: CACHE CHECK ---
+    // 1. CACHE CHECK
     const { data: cachedRow } = await supabase
       .from('cached_cards')
       .select('*')
@@ -31,7 +29,6 @@ export default async function handler(req, res) {
       .single();
 
     if (cachedRow) {
-      // Return cached data if valid
       const daysOld = (new Date() - new Date(cachedRow.last_updated)) / (1000 * 60 * 60 * 24);
       if (daysOld < 7) {
         return res.status(200).json({ 
@@ -42,73 +39,61 @@ export default async function handler(req, res) {
       }
     }
 
-    // --- STEP 2: PSA LOOKUP ---
+    // 2. PSA LOOKUP
     if (!psaToken) throw new Error("Missing PSA_API_TOKEN");
 
     console.log(`[PSA] Fetching Cert: ${cert}`);
-    
-    // We use a specific User-Agent to avoid being blocked
     const psaResponse = await axios.get(
       `https://api.psacard.com/publicapi/cert/GetByCertNumber/${cert}`,
-      { 
-        headers: { 
-            'Authorization': `Bearer ${psaToken}`,
-            'User-Agent': 'Mozilla/5.0' 
-        } 
-      }
+      { headers: { 'Authorization': `Bearer ${psaToken}` } }
     );
-    
     const psaData = psaResponse.data;
-    // Handle both new and old PSA API formats
     const cardInfo = psaData.PSACert || psaData.Cert;
 
     if (!psaData || !cardInfo) {
-        console.warn("[PSA] No card info found in response");
         return res.status(404).json({ error: "Card not found in PSA database" });
     }
 
-    // --- STEP 3: SALES LOOKUP (Card Hedger) ---
+    // 3. SALES LOOKUP (Fixed to POST)
     let salesData = [];
     try {
         const searchString = `${cardInfo.Year} ${cardInfo.Brand} ${cardInfo.Subject} PSA ${cardInfo.CardGrade}`;
-        console.log(`[Sales] Searching: ${searchString}`);
+        console.log(`[Sales] POSTing Search: ${searchString}`);
 
-        // CORRECT URL: cardhedger.com (with 'r')
-        // We try GET first as it's standard for search queries
-        const chResponse = await axios.get(
-            `https://api.cardhedger.com/v1/cards/card-search`, 
-            { 
-                params: { 
-                    q: searchString, // Common search param
-                    search: searchString // Alternate search param
-                },
-                headers: { 
-                    'X-API-KEY': chKey,
-                    'Accept': 'application/json'
-                },
-                timeout: 5000 // 5s timeout to prevent hanging
-            }
+        // FIX: Switched to POST because of 405 error
+        const chResponse = await axios.post(
+          `https://api.cardhedger.com/v1/cards/card-search`, 
+          { 
+             search: searchString // Sending search term in body
+          },
+          { 
+            headers: { 
+                'X-API-KEY': chKey,
+                'Content-Type': 'application/json'
+            },
+            timeout: 8000
+          }
         );
 
-        // Safely extract data regardless of API wrapper (data.data, data.items, etc.)
-        const rawData = chResponse.data;
-        salesData = Array.isArray(rawData) ? rawData : (rawData.data || rawData.items || []);
+        console.log(`[Sales] Status: ${chResponse.status}`);
         
+        // Handle response structure (items vs data)
+        const rawData = chResponse.data;
+        // Sometimes APIs return { items: [...] } or { data: [...] }
+        salesData = rawData.items || rawData.data || rawData || [];
+
         console.log(`[Sales] Found ${salesData.length} records`);
 
     } catch (salesError) {
-        // NON-FATAL ERROR: We log it, but we DO NOT crash.
-        // We proceed so the user at least gets the PSA Card details.
-        console.error(`[Sales] Lookup Failed: ${salesError.message}`);
-        
+        console.warn("[Sales] FAILED:", salesError.message);
         if (salesError.response) {
-             // Log detailed API error if available (404, 401, 500)
-             console.error(`[Sales] API Status: ${salesError.response.status}`);
+            console.warn("[Sales] API Status:", salesError.response.status);
+            console.warn("[Sales] API Data:", JSON.stringify(salesError.response.data));
         }
-        salesData = []; // Fallback to empty
+        salesData = []; 
     }
 
-    // --- STEP 4: SAVE TO CACHE ---
+    // 4. SAVE & RETURN
     await supabase.from('cached_cards').upsert({
       cert_id: cert,
       card_data: psaData,
@@ -116,7 +101,6 @@ export default async function handler(req, res) {
       last_updated: new Date().toISOString()
     });
 
-    // --- STEP 5: RETURN SUCCESS ---
     return res.status(200).json({ 
       source: 'api', 
       psa: psaData, 
@@ -124,10 +108,9 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    // CRITICAL ERROR CATCHER
-    console.error("CRITICAL FUNCTION ERROR:", error.message);
+    console.error("Critical Backend Error:", error.message);
     return res.status(500).json({ 
-        error: 'Backend Failure', 
+        error: 'Backend Error', 
         details: error.message 
     });
   }
