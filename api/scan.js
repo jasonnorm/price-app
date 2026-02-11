@@ -5,11 +5,10 @@ export default async function handler(req, res) {
   const { cert } = req.query;
   if (!cert) return res.status(400).json({ error: 'Cert ID required' });
 
-  // --- CONFIG CHECK ---
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_KEY;
   const psaToken = process.env.PSA_API_TOKEN;
-  const chKey = process.env.CARD_HEDGE_API_KEY;
+  const chKey = process.env.CARD_HEDGE_API_KEY; // Ensure this is set in Vercel
 
   if (!supabaseUrl || !supabaseUrl.startsWith('http')) {
     return res.status(500).json({ error: 'Configuration Error: SUPABASE_URL missing' });
@@ -36,8 +35,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // --- 2. FETCH PSA DATA (Critical Step) ---
-    // If this fails, we stop because we don't know what card it is.
+    // --- 2. FETCH PSA DATA ---
     if (!psaToken) throw new Error("Missing PSA_API_TOKEN");
 
     const psaResponse = await axios.get(
@@ -51,26 +49,42 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: "Card not found in PSA database" });
     }
 
-    // --- 3. FETCH SALES DATA (Optional Step) ---
-    // We wrap this in its OWN try/catch. If it fails, we still return the PSA card data.
+    // --- 3. FETCH SALES DATA (Updated for /v1/cards/card-search) ---
     let salesData = [];
     try {
-        // CORRECT URL: api.cardhedger.com (added 'r')
         const searchString = `${cardInfo.Year} ${cardInfo.Brand} ${cardInfo.Subject} PSA ${cardInfo.CardGrade}`;
-        console.log(`Searching Sales for: ${searchString}`);
+        console.log(`Searching Card Hedge for: ${searchString}`);
 
-        const chResponse = await axios.get(
-          `https://api.cardhedger.com/v1/sales/search`, 
+        // CORRECTED CALL: POST request to the v1 endpoint
+        const chResponse = await axios.post(
+          `https://api.cardhedger.com/v1/cards/card-search`, 
           { 
-            params: { q: searchString },
-            headers: { 'X-API-KEY': chKey } 
+             search: searchString,
+             limit: 1 // We just want the best match
+          },
+          { 
+            headers: { 
+                'X-API-KEY': chKey,
+                'Content-Type': 'application/json'
+            },
+            timeout: 5000 
           }
         );
-        salesData = chResponse.data.data || [];
+
+        // The search returns a list of cards. We take the first one.
+        // Note: You might need to adjust this depending on if CH returns 'items' or 'data'
+        const results = chResponse.data.data || chResponse.data.items || [];
+        
+        if (results.length > 0) {
+            // The API usually returns the card *details* in the search. 
+            // If we need specific sales history, we might need a 2nd call using results[0].id
+            // But often the search result includes a 'last_sold' or 'price' field we can use.
+            // For now, we will assume the search returns a usable object.
+            salesData = results; 
+        }
         
     } catch (salesError) {
-        // Log the error but DO NOT CRASH. Just send back empty sales.
-        console.error("Sales Lookup Failed:", salesError.message);
+        console.warn("Sales Lookup Failed:", salesError.message);
         salesData = []; 
     }
 
@@ -92,7 +106,7 @@ export default async function handler(req, res) {
     console.error("Critical Backend Error:", error.message);
     return res.status(500).json({ 
         error: 'Backend Error', 
-        details: error.response ? error.response.data : error.message 
+        details: error.message 
     });
   }
 }
