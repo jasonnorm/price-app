@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>PSA Scanner v29 (Graceful Fail)</title>
+    <title>PSA Scanner v34 (Visual Polish)</title>
     
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -95,6 +95,7 @@
             </div>
             
             <div class="flex items-center gap-3">
+                <button onclick="downloadReport()" class="w-8 h-8 bg-blue-600 rounded-full text-white hover:bg-blue-500 transition flex items-center justify-center shadow-lg"><i class="fas fa-download text-sm"></i></button>
                 <button onclick="closeModal()" class="w-8 h-8 bg-gray-800 rounded-full text-white hover:bg-gray-700 transition flex items-center justify-center"><i class="fas fa-times"></i></button>
             </div>
         </div>
@@ -102,9 +103,13 @@
         <div id="report-content" class="flex-1 overflow-y-auto p-5 space-y-6 pb-20 bg-[#111827]">
             
             <div class="flex gap-4 items-start">
-                <div class="w-24 h-32 bg-gray-800 rounded-lg flex items-center justify-center border border-gray-700 shadow-2xl">
-                    <i class="fas fa-image text-gray-600 text-3xl"></i>
+                <div class="w-24 h-32 relative rounded-lg border border-gray-700 shadow-2xl overflow-hidden bg-gray-800 flex items-center justify-center">
+                    <img id="card-image" class="w-full h-full object-cover" src="" onerror="this.style.display='none'; document.getElementById('image-fallback').style.display='flex'">
+                    <div id="image-fallback" class="absolute inset-0 hidden items-center justify-center text-gray-500">
+                        <i class="fas fa-image text-2xl"></i>
+                    </div>
                 </div>
+                
                 <div class="flex-1">
                     <h1 id="card-title" class="text-xl font-bold text-white leading-tight mb-1">Loading...</h1>
                     <div class="flex items-center gap-2 mb-2">
@@ -219,37 +224,36 @@
             document.getElementById('header-cert').innerText = "#" + cert;
             document.getElementById('result-modal').classList.add('open');
 
-            // Reset Badges
+            // Reset UI
             document.getElementById('badge-live').classList.add('hidden');
             document.getElementById('badge-partial').classList.add('hidden');
             document.getElementById('badge-sim').classList.add('hidden');
             document.getElementById('no-data-msg').classList.add('hidden');
+            document.getElementById('image-fallback').style.display = 'none';
+            document.getElementById('card-image').style.display = 'block';
 
-            let cardData = {};
-            
             // --- SCENARIO 1: WE HAVE REAL PSA DATA ---
             if (psa && (psa.Cert || psa.PSACert)) {
                 const info = psa.PSACert || psa.Cert;
                 
-                // Show Card Details
                 document.getElementById('card-title').innerText = `${info.Year} ${info.Brand} ${info.Subject}`;
                 document.getElementById('card-set').innerText = info.Variety || "Base";
                 document.getElementById('card-grade').innerText = `PSA ${info.CardGrade}`;
                 document.getElementById('card-pop').innerText = `Pop: ${info.TotalPopulation || info.PopulationHigher || 'N/A'}`;
+                
+                // Attempt to load PSA Image. If 404, onerror triggers the fallback icon
+                document.getElementById('card-image').src = `https://www.psacard.com/cardfacts/cert/${cert}/image`;
 
-                // Handle Sales
                 if (externalSales && externalSales.length > 0) {
-                    // Full Live Mode
                     document.getElementById('badge-live').classList.remove('hidden');
                     processSalesData(externalSales);
                 } else {
-                    // Partial Mode (Real Card, No Sales)
                     document.getElementById('badge-partial').classList.remove('hidden');
                     document.getElementById('no-data-msg').classList.remove('hidden');
-                    clearSalesData(); // Clear charts/numbers
+                    clearSalesData(); 
                 }
             } 
-            // --- SCENARIO 2: TOTAL FAILURE (SIMULATION) ---
+            // --- SCENARIO 2: SIMULATION ---
             else {
                 document.getElementById('badge-sim').classList.remove('hidden');
                 document.getElementById('card-title').innerText = "1952 Topps Mickey Mantle (SIMULATION)";
@@ -257,7 +261,6 @@
                 document.getElementById('card-grade').innerText = "PSA 2.5";
                 document.getElementById('card-pop').innerText = "Pop: 1,240";
                 
-                // Generate Fake Data
                 const simData = generateMantleMasterData();
                 processSalesData(simData);
             }
@@ -280,7 +283,6 @@
                 dateObj: new Date(s.date || s.dateObj)
             })).sort((a,b) => a.dateObj - b.dateObj);
 
-            // Calculate Stats
             const last5 = masterSalesData.slice(-5).map(s => s.y);
             const avg = last5.reduce((a,b)=>a+b,0)/last5.length;
             const lastSale = masterSalesData[masterSalesData.length - 1];
@@ -294,7 +296,6 @@
             renderList(masterSalesData.slice().reverse().slice(0, 15));
         }
 
-        // --- CHARTING & HELPERS ---
         function renderChart(sales) { 
             const ctx = document.getElementById('interactiveChart').getContext('2d'); 
             if(chartInstance) chartInstance.destroy(); 
@@ -341,6 +342,7 @@
         function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
         function typeWriterEffect(text) { return new Promise(r => { const el = document.getElementById('digital-number'); el.innerText = ""; let i=0; const int = setInterval(() => { el.innerText += text.charAt(i++); if(i >= text.length) { clearInterval(int); r(); } }, 70); }); }
         function closeModal() { document.getElementById('result-modal').classList.remove('open'); }
+        function downloadReport() { html2canvas(document.getElementById('report-content')).then(canvas => { const link = document.createElement('a'); link.download = 'Report.png'; link.href = canvas.toDataURL(); link.click(); }); }
     </script>
 </body>
 </html>
