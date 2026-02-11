@@ -44,15 +44,20 @@ export default async function handler(req, res) {
     );
     const psaData = psaResponse.data;
 
-    // *** THE FIX IS HERE: VALIDATE DATA BEFORE USING IT ***
-    if (!psaData || !psaData.Cert) {
+    // *** FIX: Check for 'PSACert' instead of 'Cert' ***
+    const cardInfo = psaData.PSACert || psaData.Cert; // Handle both potential formats
+
+    if (!psaData || !cardInfo) {
         console.error("PSA API returned invalid data:", psaData);
         return res.status(404).json({ error: "Card not found in PSA database" });
     }
 
-    // Call Card Hedge
-    const searchString = `${psaData.Cert.Year} ${psaData.Cert.Brand} ${psaData.Cert.Subject} PSA ${psaData.Cert.CardGrade}`;
+    // *** FIX: Use 'cardInfo' variable for easier reading ***
+    // Search String: "2018 TOPPS UPDATE SHOHEI OHTANI PSA GEM MT 10"
+    const searchString = `${cardInfo.Year} ${cardInfo.Brand} ${cardInfo.Subject} PSA ${cardInfo.CardGrade}`;
     
+    console.log("Searching CardHedge for:", searchString); // Helpful debug log
+
     const chResponse = await axios.get(
       `https://api.cardhedge.com/v1/sales/search`, 
       { 
@@ -78,7 +83,6 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error("Backend Error:", error.message);
-    // Return the actual error to the frontend so you can see it in the app
     return res.status(500).json({ 
         error: 'Backend Error', 
         details: error.response ? error.response.data : error.message 
