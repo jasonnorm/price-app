@@ -54,17 +54,16 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: "Card not found in PSA database" });
     }
 
-    // 3. SALES LOOKUP (Fixed to POST)
+    // 3. SALES LOOKUP (Debug Mode)
     let salesData = [];
     try {
         const searchString = `${cardInfo.Year} ${cardInfo.Brand} ${cardInfo.Subject} PSA ${cardInfo.CardGrade}`;
         console.log(`[Sales] POSTing Search: ${searchString}`);
 
-        // FIX: Switched to POST because of 405 error
         const chResponse = await axios.post(
           `https://api.cardhedger.com/v1/cards/card-search`, 
           { 
-             search: searchString // Sending search term in body
+             search: searchString
           },
           { 
             headers: { 
@@ -76,20 +75,30 @@ export default async function handler(req, res) {
         );
 
         console.log(`[Sales] Status: ${chResponse.status}`);
-        
-        // Handle response structure (items vs data)
         const rawData = chResponse.data;
-        // Sometimes APIs return { items: [...] } or { data: [...] }
-        salesData = rawData.items || rawData.data || rawData || [];
 
-        console.log(`[Sales] Found ${salesData.length} records`);
+        // --- THE FIX: INTELLIGENT PARSING ---
+        if (Array.isArray(rawData)) {
+            salesData = rawData;
+        } else if (rawData && Array.isArray(rawData.data)) {
+            salesData = rawData.data;
+        } else if (rawData && Array.isArray(rawData.items)) {
+            salesData = rawData.items;
+        } else if (rawData && Array.isArray(rawData.cards)) { // Common key
+            salesData = rawData.cards;
+        } else if (rawData && Array.isArray(rawData.results)) { // Another common key
+            salesData = rawData.results;
+        } else {
+            // It's an object, but we don't know the key.
+            // LOG THE KEYS so we can fix it!
+            console.warn("[Sales] Unknown JSON Structure. Keys found:", Object.keys(rawData));
+            salesData = [];
+        }
+
+        console.log(`[Sales] Final Count: ${salesData.length}`);
 
     } catch (salesError) {
         console.warn("[Sales] FAILED:", salesError.message);
-        if (salesError.response) {
-            console.warn("[Sales] API Status:", salesError.response.status);
-            console.warn("[Sales] API Data:", JSON.stringify(salesError.response.data));
-        }
         salesData = []; 
     }
 
