@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PSA Scanner (Clean Code)</title>
+    
+    <link rel="stylesheet" href="style.css">
+
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+
+    <video id="camera-feed" autoplay playsinline muted></video>
+    
+    <div class="scan-overlay">
+        <div class="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-yellow-500 rounded-tl-lg"></div>
+        <div class="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-yellow-500 rounded-tr-lg"></div>
+        <div class="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-yellow-500 rounded-bl-lg"></div>
+        <div class="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-yellow-500 rounded-br-lg"></div>
+        <div class="scan-line"></div>
+    </div>
+
+    <div class="absolute bottom-8 w-full flex flex-col items-center gap-6 z-20 px-5">
+        <button onclick="startScan()" class="group relative">
+            <div class="absolute inset-0 bg-yellow-600 rounded-full blur opacity-40 group-hover:opacity-60 transition animate-pulse"></div>
+            <div class="w-20 h-20 bg-black/40 backdrop-blur-md rounded-full border-2 border-yellow-500/50 flex items-center justify-center relative z-10 active:scale-95 transition">
+                <i class="fas fa-camera text-3xl text-yellow-500 drop-shadow-lg"></i>
+            </div>
+        </button>
+        <div class="flex gap-2 w-full max-w-xs bg-black/80 p-2 rounded-lg border border-gray-700 backdrop-blur-sm">
+            <input type="text" id="manual-input" placeholder="Or type Cert #" class="bg-transparent text-white text-center w-full outline-none font-mono tracking-wider placeholder-gray-500">
+            <button onclick="manualSubmit()" class="text-yellow-500 font-bold text-sm px-2">GO</button>
+        </div>
+    </div>
+
+    <div id="processing-ui">
+        <div id="loading-stage" class="text-center space-y-4">
+            <div class="animate-spin rounded-full h-12 w-12 border-4 border-gray-800 border-t-yellow-500 mx-auto"></div>
+            <p class="text-yellow-500 font-mono text-sm tracking-widest animate-pulse">AUTHENTICATING...</p>
+        </div>
+        <div id="reveal-stage" class="hidden flex-col items-center">
+            <div class="text-gray-400 text-xs font-mono mb-2 uppercase tracking-widest">GRAIL DETECTED</div>
+            <div id="digital-number" class="digital-readout"></div>
+            <div class="mt-4 text-black bg-yellow-500 font-bold tracking-widest text-xs border border-yellow-600 px-4 py-1.5 rounded-full shadow-[0_0_15px_#eab308]">
+                <i class="fas fa-star mr-1"></i> VERIFIED VINTAGE
+            </div>
+        </div>
+    </div>
+
+    <canvas id="capture-canvas" style="display:none;"></canvas>
+
+    <div id="result-modal">
+        <div class="bg-gray-900 border-b border-gray-800 px-5 py-4 flex justify-between items-center z-50 sticky top-0 shadow-xl">
+            <div class="flex items-center gap-2">
+                <span class="bg-yellow-600 text-black text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">Vintage</span>
+                <span id="header-cert" class="text-gray-400 font-mono text-sm">#--------</span>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <button onclick="downloadReport()" class="w-8 h-8 bg-blue-600 rounded-full text-white hover:bg-blue-500 transition flex items-center justify-center shadow-lg">
+                    <i class="fas fa-download text-sm"></i>
+                </button>
+                <button onclick="closeModal()" class="w-8 h-8 bg-gray-800 rounded-full text-white hover:bg-gray-700 transition flex items-center justify-center">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+
+        <div id="report-content" class="flex-1 overflow-y-auto p-5 space-y-6 pb-20 bg-[#111827]">
+            
+            <div class="flex gap-4 items-start">
+                <img id="card-image" src="mantle.jpg" class="w-24 rounded-lg shadow-2xl border border-gray-700">
+                <div class="flex-1">
+                    <h1 class="text-xl font-bold text-white leading-tight mb-1">1952 Topps Mickey Mantle #311</h1>
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-gray-400 text-xs">Baseball</span>
+                        <span class="text-gray-600 text-[10px]">•</span>
+                        <span class="text-gray-400 text-xs">High Number</span>
+                    </div>
+                    <div class="inline-block bg-white text-black font-bold text-sm px-3 py-1 rounded shadow-lg border-l-4 border-red-600">
+                        <span>PSA 2.5 - GOOD+</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div class="glass-panel p-3 rounded-xl border border-gray-700 relative overflow-hidden">
+                    <div class="text-gray-400 text-[10px] font-bold uppercase tracking-wide mb-1 border-b border-dashed border-gray-600 w-max tooltip-trigger cursor-help">
+                        Eye Appeal Range
+                        <div class="tooltip-content">Wide range due to centering/color differences in vintage cards.</div>
+                    </div>
+                    <div class="flex items-baseline gap-2 mb-2">
+                        <div id="comp-low" class="text-lg font-bold text-gray-400">--</div>
+                        <div class="text-gray-600 font-light">to</div>
+                        <div id="comp-high" class="text-xl font-bold text-white">--</div>
+                    </div>
+                    <div class="w-full h-px bg-gray-700 mb-2"></div>
+                    <div class="flex justify-between items-center">
+                        <div class="text-[9px] text-gray-500 font-bold uppercase">Last Sale</div>
+                        <div class="flex items-center gap-2">
+                            <i id="last-sale-icon" class="text-xs"></i>
+                            <div id="last-sale-price" class="text-sm font-bold text-white">--</div>
+                        </div>
+                    </div>
+                </div>
+                 <div class="glass-panel p-3 rounded-xl border-l-2 border-yellow-500">
+                    <div class="text-gray-400 text-[10px] font-bold uppercase tracking-wide mb-1">Market State</div>
+                    <div id="overall-status" class="text-white font-bold text-md leading-tight">ANALYZING...</div>
+                    <div class="text-[9px] text-yellow-500 font-bold mt-1">HIGH QUALITY VOLATILITY</div>
+                </div>
+            </div>
+
+            <div class="glass-panel p-4 rounded-xl border border-gray-700 relative overflow-hidden">
+                <div id="ai-bg-glow" class="absolute inset-0 opacity-20 bg-gradient-to-r from-transparent via-blue-500 to-transparent"></div>
+                <div class="flex justify-between items-start relative z-10">
+                    <div>
+                        <div class="text-gray-400 text-[10px] font-bold uppercase tracking-wide mb-1 flex items-center gap-1"><i class="fas fa-robot text-blue-400"></i> AI Assessment</div>
+                        <h2 id="ai-signal-title" class="text-2xl font-black text-blue-400 italic tracking-tighter leading-none mb-1">ACCUMULATE</h2>
+                        <p id="ai-signal-desc" class="text-[11px] text-gray-300 max-w-[200px] leading-relaxed">Steady 12mo growth (+20%). High price variance per grade offers arbitrage opportunities.</p>
+                    </div>
+                    <div class="flex flex-col items-center justify-center bg-gray-900/80 rounded-lg p-2 border border-gray-600 w-16 h-16 backdrop-blur">
+                        <i class="fas fa-layer-group text-blue-400 text-2xl mb-1"></i><span class="text-[9px] font-bold text-gray-400">82/100</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-panel p-3 rounded-xl border border-gray-700">
+                <div class="flex items-center gap-1 mb-3 relative tooltip-trigger">
+                    <div class="text-gray-400 text-[10px] font-bold uppercase tracking-wide cursor-help border-b border-dashed border-gray-600">Vintage Volatility Radar</div>
+                    <i class="fas fa-circle-info text-[10px] text-blue-500"></i>
+                    <div class="tooltip-content">Scores are naturally high due to "Eye Appeal" variance. This is normal for 1952 Topps.</div>
+                </div>
+                <div class="grid grid-cols-3 gap-2">
+                    <div class="bg-gray-900/50 rounded-lg p-2 text-center border border-gray-700 transition-colors" id="vol-box-30"><div class="text-[9px] text-gray-500 font-bold uppercase mb-1">30 Day</div><div class="text-xl font-bold text-white" id="vol-score-30">--</div><div class="h-1 bg-gray-700 rounded-full mt-1 overflow-hidden"><div id="vol-bar-30" class="h-full w-0 transition-all duration-500"></div></div></div>
+                    <div class="bg-gray-900/50 rounded-lg p-2 text-center border border-gray-700 transition-colors" id="vol-box-60"><div class="text-[9px] text-gray-500 font-bold uppercase mb-1">60 Day</div><div class="text-xl font-bold text-white" id="vol-score-60">--</div><div class="h-1 bg-gray-700 rounded-full mt-1 overflow-hidden"><div id="vol-bar-60" class="h-full w-0 transition-all duration-500"></div></div></div>
+                    <div class="bg-gray-900/50 rounded-lg p-2 text-center border border-gray-700 transition-colors" id="vol-box-90"><div class="text-[9px] text-gray-500 font-bold uppercase mb-1">90 Day</div><div class="text-xl font-bold text-white" id="vol-score-90">--</div><div class="h-1 bg-gray-700 rounded-full mt-1 overflow-hidden"><div id="vol-bar-90" class="h-full w-0 transition-all duration-500"></div></div></div>
+                </div>
+            </div>
+
+            <div class="glass-panel p-4 rounded-xl border border-gray-700">
+                <div class="flex justify-between items-center mb-1"><h3 class="text-white text-sm font-bold">90-Day Trend (+5.2%)</h3></div>
+                <div class="h-64 w-full"><canvas id="interactiveChart"></canvas></div>
+            </div>
+            <div class="glass-panel p-4 rounded-xl border border-gray-700">
+                <div class="flex justify-between items-center mb-1"><h3 class="text-white text-sm font-bold">12-Month Distribution (+21%)</h3></div>
+                <div class="h-64 w-full"><canvas id="distributionChart"></canvas></div>
+            </div>
+
+            <div><h3 class="text-gray-500 text-xs font-bold uppercase mb-3 px-1">Recent Transactions</h3><div id="sales-list" class="space-y-2"></div></div>
+            <button onclick="closeModal()" class="w-full bg-blue-600 text-white font-bold py-4 rounded-xl hover:bg-blue-500 transition shadow-lg shadow-blue-900/30 mb-8">Scan Next Card</button>
+        </div>
+    </div>
+
+    <script>
+        // Paste the javascript logic from Version 21 (The Authentic Visuals Edition) here.
+        // It fits perfectly with the IDs in this cleaned HTML.
+        const Platforms = { EBAY: { name: 'eBay', unicode: '\uf174', font: '"Font Awesome 6 Brands"', color: '#3b82f6', hex: '#3b82f6' }, GOLDIN: { name: 'Goldin', unicode: '\uf0e3', font: '"Font Awesome 6 Free"', color: '#eab308', hex: '#eab308' }, PWCC: { name: 'PWCC', unicode: '\uf4c3', font: '"Font Awesome 6 Free"', color: '#818cf8', hex: '#818cf8' }, HERITAGE: { name: 'Heritage', unicode: '\uf19c', font: '"Font Awesome 6 Free"', color: '#ef4444', hex: '#ef4444' } };
+        const video = document.getElementById('camera-feed'); const canvas = document.getElementById('capture-canvas'); const ctx = canvas.getContext('2d');
+        let chartInstance = null; let distChartInstance = null; let masterSalesData = [];
+
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(stream => video.srcObject = stream).catch(err => console.log("Camera denied"));
+        function manualSubmit() { runProcess(document.getElementById('manual-input').value || "3115200"); }
+        async function startScan() { document.getElementById('processing-ui').style.display = 'flex'; document.getElementById('loading-stage').style.display = 'block'; document.getElementById('reveal-stage').style.display = 'none'; canvas.width = video.videoWidth; canvas.height = video.videoHeight; ctx.drawImage(video, 0, 0); await wait(1000); let detectedCert = "3115200"; try { const { data: { text } } = await Tesseract.recognize(canvas, 'eng'); const match = text.replace(/[^0-9]/g, '').match(/(\d{7,8})/); if(match) detectedCert = match[0]; } catch(e) {} runProcess(detectedCert); }
+        async function runProcess(cert) { document.getElementById('processing-ui').style.display = 'flex'; document.getElementById('loading-stage').style.display = 'none'; document.getElementById('reveal-stage').style.display = 'flex'; await typeWriterEffect(cert); await wait(600); populateDashboard(cert); }
+        function downloadReport() { html2canvas(document.getElementById('report-content'), { scale: 2, backgroundColor: '#111827', useCORS: true, logging: false, onclone: (clonedDoc) => { const clonedContent = clonedDoc.getElementById('report-content'); clonedContent.style.overflow = 'visible'; clonedContent.style.height = 'auto'; } }).then(canvas => { const link = document.createElement('a'); link.download = 'PSA_Report_Mantle.png'; link.href = canvas.toDataURL('image/png'); link.click(); }).catch(err => alert("Could not save image (CORS restriction on external card image).")); }
+        function generateMantleMasterData() { let data = []; const today = new Date(); const platformKeys = [Platforms.EBAY, Platforms.GOLDIN, Platforms.PWCC, Platforms.HERITAGE]; const startPrice = 48000; const endPrice = 58000; const dailyGrowth = (endPrice - startPrice) / 365; for (let i = 365; i >= 0; i--) { if (Math.random() > 0.82) { const date = new Date(); date.setDate(today.getDate() - i); let currentBase = startPrice + (dailyGrowth * (365 - i)); let eyeAppealFactor = 0.8 + (Math.random() * 0.45); let finalPrice = Math.floor(currentBase * eyeAppealFactor); let pIndex = Math.floor(Math.random() * 4); data.push({ x: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), y: finalPrice, dateObj: date, platform: platformKeys[pIndex], url: '#' }); } } return data.sort((a,b) => a.dateObj - b.dateObj); }
+        function populateDashboard(cert) { document.getElementById('processing-ui').style.display = 'none'; document.getElementById('header-cert').innerText = "#" + cert; document.getElementById('result-modal').classList.add('open'); masterSalesData = generateMantleMasterData(); const cutoff90 = new Date(); cutoff90.setDate(cutoff90.getDate() - 90); const data90 = masterSalesData.filter(s => s.dateObj >= cutoff90); const score30 = calculateVolScore(masterSalesData, 30); updateVolUI('30', score30); updateVolUI('60', calculateVolScore(masterSalesData, 60)); updateVolUI('90', calculateVolScore(masterSalesData, 90)); document.getElementById('overall-status').innerText = "STEADY GROWTH"; document.getElementById('overall-status').className = "text-md font-bold text-yellow-400"; const last5 = data90.slice(-5).map(s => s.y); const avg = last5.reduce((a,b)=>a+b,0)/last5.length; document.getElementById('comp-low').innerText = "$" + Math.floor(avg * 0.85).toLocaleString(); document.getElementById('comp-high').innerText = "$" + Math.floor(avg * 1.25).toLocaleString(); const lastSale = masterSalesData[masterSalesData.length - 1]; document.getElementById('last-sale-price').innerText = "$" + lastSale.y.toLocaleString(); const iconEl = document.getElementById('last-sale-icon'); iconEl.className = `text-xs ${lastSale.platform.font.indexOf('Brands') > -1 ? 'fa-brands' : 'fa-solid'} ${lastSale.platform.unicode === '\uf19c' ? 'fa-landmark' : ''}`; if(lastSale.platform.name === 'eBay') iconEl.className = 'fa-brands fa-ebay text-xs'; if(lastSale.platform.name === 'Goldin') iconEl.className = 'fa-solid fa-gavel text-xs'; if(lastSale.platform.name === 'PWCC') iconEl.className = 'fa-solid fa-vault text-xs'; if(lastSale.platform.name === 'Heritage') iconEl.className = 'fa-solid fa-landmark text-xs'; iconEl.style.color = lastSale.platform.hex; render90DayChart(data90); render12MonthChart(masterSalesData); renderList(data90.slice(-8).reverse()); }
+        function calculateVolScore(sales, days) { const cutoffDate = new Date(); cutoffDate.setDate(cutoffDate.getDate() - days); const subset = sales.filter(s => s.dateObj >= cutoffDate); if(subset.length < 3) return 5; const prices = subset.map(s => s.y); const mean = prices.reduce((a,b)=>a+b,0) / prices.length; const variance = prices.reduce((a,b)=>a+Math.pow(b-mean,2),0) / prices.length; const stdDev = Math.sqrt(variance); const cov = (stdDev / mean) * 100; let score = Math.ceil(cov / 3); if(score < 1) score = 1; if(score > 10) score = 10; return score; }
+        function updateVolUI(idSuffix, score) { const elBar = document.getElementById(`vol-bar-${idSuffix}`); const elScore = document.getElementById(`vol-score-${idSuffix}`); const elBox = document.getElementById(`vol-box-${idSuffix}`); elScore.innerText = score + "/10"; elBar.style.width = (score * 10) + "%"; elBar.className = "h-full w-0 transition-all duration-500"; elBox.className = "bg-gray-900/50 rounded-lg p-2 text-center border transition-colors"; if(score <= 4) { elBar.classList.add('bg-green-500'); elBox.classList.add('border-green-900'); elScore.classList.add('text-green-400'); } else if (score <= 8) { elBar.classList.add('bg-yellow-500'); elBox.classList.add('border-yellow-900'); elScore.classList.add('text-yellow-400'); } else { elBar.classList.add('bg-orange-600'); elBox.classList.add('border-orange-900'); elScore.classList.add('text-orange-500'); } }
+        function render90DayChart(sales) { const ctx = document.getElementById('interactiveChart').getContext('2d'); if(chartInstance) chartInstance.destroy(); const gradient = ctx.createLinearGradient(0, 0, 0, 300); gradient.addColorStop(0, 'rgba(234, 179, 8, 0.2)'); gradient.addColorStop(1, 'rgba(234, 179, 8, 0.0)'); chartInstance = new Chart(ctx, { type: 'line', data: { labels: sales.map(s => s.x), datasets: [{ label: 'Price', data: sales.map(s => s.y), borderColor: '#eab308', borderWidth: 1, tension: 0.4, fill: true, backgroundColor: gradient, pointBackgroundColor: '#ca8a04', pointRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#333' }, ticks: { color: '#666', callback: v => '$'+v/1000+'k' } } } } }); }
+        function render12MonthChart(sales) { const ctx = document.getElementById('distributionChart').getContext('2d'); if(distChartInstance) distChartInstance.destroy(); const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; let monthlyBuckets = {}; sales.forEach(s => { const mKey = monthNames[s.dateObj.getMonth()]; if(!monthlyBuckets[mKey]) monthlyBuckets[mKey] = []; monthlyBuckets[mKey].push(s.y); }); const wickData = Object.keys(monthlyBuckets).map(m => { const vals = monthlyBuckets[m]; return { x: m, y: [Math.min(...vals), Math.max(...vals)] }; }); const scatterData = sales.map(s => ({ x: monthNames[s.dateObj.getMonth()], y: s.y })); distChartInstance = new Chart(ctx, { data: { labels: Object.keys(monthlyBuckets), datasets: [{ type: 'bar', label: 'Range', data: wickData, backgroundColor: '#4b5563', barThickness: 2, order: 2 }, { type: 'scatter', label: 'Sale', data: scatterData, backgroundColor: '#eab308', borderColor: 'black', borderWidth: 1, pointRadius: 3, order: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { color: '#9ca3af', font: { size: 10 } } }, y: { grid: { color: '#333' }, ticks: { color: '#666', callback: v => '$'+v/1000+'k' } } } } }); }
+        function renderList(sales) { const list = document.getElementById('sales-list'); list.innerHTML = ''; sales.forEach(s => { let iconClass = 'fa-solid fa-gavel'; if(s.platform.name === 'eBay') iconClass = 'fa-brands fa-ebay'; if(s.platform.name === 'Heritage') iconClass = 'fa-solid fa-landmark'; list.innerHTML += `<div class="flex justify-between items-center bg-gray-800/40 p-3 rounded-lg border border-gray-700 hover:bg-gray-700 transition cursor-pointer"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center border border-gray-600"><i class="${iconClass}" style="color: ${s.platform.hex}"></i></div><div><div class="text-white text-xs font-bold">${s.platform.name}</div><div class="text-gray-500 text-[10px]">${s.x}</div></div></div><div class="text-white font-mono font-bold">$${s.y.toLocaleString()}</div></div>`; }); }
+        function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+        function typeWriterEffect(text) { return new Promise(r => { const el = document.getElementById('digital-number'); el.innerText = ""; let i=0; const int = setInterval(() => { el.innerText += text.charAt(i++); if(i >= text.length) { clearInterval(int); r(); } }, 70); }); }
+        function closeModal() { document.getElementById('result-modal').classList.remove('open'); }
+    </script>
+</body>
+</html>
