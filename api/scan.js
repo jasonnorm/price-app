@@ -5,10 +5,11 @@ export default async function handler(req, res) {
   const { cert } = req.query;
   if (!cert) return res.status(400).json({ error: 'Cert ID required' });
 
+  // --- CONFIG ---
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_KEY;
   const psaToken = process.env.PSA_API_TOKEN;
-  const chKey = process.env.CARD_HEDGE_API_KEY; // Ensure this is set in Vercel
+  const chKey = process.env.CARD_HEDGE_API_KEY;
 
   if (!supabaseUrl || !supabaseUrl.startsWith('http')) {
     return res.status(500).json({ error: 'Configuration Error: SUPABASE_URL missing' });
@@ -17,7 +18,7 @@ export default async function handler(req, res) {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
-    // --- 1. CACHE CHECK ---
+    // 1. CHECK CACHE
     const { data: cachedRow } = await supabase
       .from('cached_cards')
       .select('*')
@@ -35,9 +36,10 @@ export default async function handler(req, res) {
       }
     }
 
-    // --- 2. FETCH PSA DATA ---
+    // 2. PSA LOOKUP
     if (!psaToken) throw new Error("Missing PSA_API_TOKEN");
-
+    
+    console.log(`Fetching PSA Cert: ${cert}`);
     const psaResponse = await axios.get(
       `https://api.psacard.com/publicapi/cert/GetByCertNumber/${cert}`,
       { headers: { 'Authorization': `Bearer ${psaToken}` } }
@@ -49,46 +51,45 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: "Card not found in PSA database" });
     }
 
-    // --- 3. FETCH SALES DATA (Updated for /v1/cards/card-search) ---
+    // 3. SALES LOOKUP (DEBUG MODE)
     let salesData = [];
     try {
         const searchString = `${cardInfo.Year} ${cardInfo.Brand} ${cardInfo.Subject} PSA ${cardInfo.CardGrade}`;
-        console.log(`Searching Card Hedge for: ${searchString}`);
+        console.log(`[Sales] Searching: ${searchString}`);
 
-        // CORRECTED CALL: POST request to the v1 endpoint
-        const chResponse = await axios.post(
-          `https://api.cardhedger.com/v1/cards/card-search`, 
-          { 
-             search: searchString,
-             limit: 1 // We just want the best match
-          },
-          { 
+        // SWITCHED TO GET REQUEST
+        // We assume the param is 'q' or 'search'. Trying 'q' as standard.
+        const chUrl = `https://api.cardhedger.com/v1/cards/card-search`;
+        
+        const chResponse = await axios.get(chUrl, { 
+            params: { q: searchString },
             headers: { 
                 'X-API-KEY': chKey,
-                'Content-Type': 'application/json'
+                'Accept': 'application/json'
             },
-            timeout: 5000 
-          }
-        );
+            timeout: 8000 // 8s timeout
+        });
 
-        // The search returns a list of cards. We take the first one.
-        // Note: You might need to adjust this depending on if CH returns 'items' or 'data'
-        const results = chResponse.data.data || chResponse.data.items || [];
+        console.log(`[Sales] Status: ${chResponse.status}`);
         
-        if (results.length > 0) {
-            // The API usually returns the card *details* in the search. 
-            // If we need specific sales history, we might need a 2nd call using results[0].id
-            // But often the search result includes a 'last_sold' or 'price' field we can use.
-            // For now, we will assume the search returns a usable object.
-            salesData = results; 
-        }
+        // Log the keys of the response to see structure (e.g., 'data', 'items', 'cards')
+        console.log(`[Sales] Response Keys: ${Object.keys(chResponse.data)}`);
+
+        // Handle various potential response shapes
+        salesData = chResponse.data.data || chResponse.data.items || chResponse.data || [];
         
+        console.log(`[Sales] Count: ${Array.isArray(salesData) ? salesData.length : 'Not Array'}`);
+
     } catch (salesError) {
-        console.warn("Sales Lookup Failed:", salesError.message);
-        salesData = []; 
+        console.error("[Sales] FAILED:", salesError.message);
+        if (salesError.response) {
+            console.error("[Sales] API Error Data:", JSON.stringify(salesError.response.data));
+            console.error("[Sales] API Status:", salesError.response.status);
+        }
+        salesData = []; // Fallback to empty
     }
 
-    // --- 4. SAVE TO CACHE ---
+    // 4. CACHE & RETURN
     await supabase.from('cached_cards').upsert({
       cert_id: cert,
       card_data: psaData,
