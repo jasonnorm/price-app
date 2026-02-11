@@ -1,33 +1,31 @@
-// /api/scan.js
 import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
 
-// Initialize Supabase (Database)
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
-
 export default async function handler(req, res) {
-  // 1. Get Cert ID from Frontend
   const { cert } = req.query;
   if (!cert) return res.status(400).json({ error: 'Cert ID required' });
 
+  // --- CONFIG CHECK ---
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_KEY;
+  
+  if (!supabaseUrl || !supabaseUrl.startsWith('http')) {
+    return res.status(500).json({ error: 'Configuration Error: SUPABASE_URL missing' });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
   try {
-    // ---------------------------------------------------------
-    // STEP A: Check Cache (Database)
-    // ---------------------------------------------------------
-    const { data: cachedRow, error: dbError } = await supabase
+    // --- 1. CACHE CHECK ---
+    const { data: cachedRow } = await supabase
       .from('cached_cards')
       .select('*')
       .eq('cert_id', cert)
       .single();
 
-    // If found and less than 7 days old, return cached data!
     if (cachedRow) {
       const daysOld = (new Date() - new Date(cachedRow.last_updated)) / (1000 * 60 * 60 * 24);
       if (daysOld < 7) {
-        console.log("Serving from Cache");
         return res.status(200).json({ 
           source: 'cache', 
           psa: cachedRow.card_data, 
@@ -36,20 +34,25 @@ export default async function handler(req, res) {
       }
     }
 
-    // ---------------------------------------------------------
-    // STEP B: Fetch Real Data (APIs)
-    // ---------------------------------------------------------
-    console.log("Cache miss. Fetching from APIs...");
+    // --- 2. API FETCH ---
+    if (!process.env.PSA_API_TOKEN) throw new Error("Missing PSA_API_TOKEN");
 
-    // 1. Call PSA API
+    // Call PSA
     const psaResponse = await axios.get(
       `https://api.psacard.com/publicapi/cert/GetByCertNumber/${cert}`,
       { headers: { 'Authorization': `Bearer ${process.env.PSA_API_TOKEN}` } }
     );
     const psaData = psaResponse.data;
 
-    // 2. Call Card Hedge API (Sales Data)
+    // *** THE FIX IS HERE: VALIDATE DATA BEFORE USING IT ***
+    if (!psaData || !psaData.Cert) {
+        console.error("PSA API returned invalid data:", psaData);
+        return res.status(404).json({ error: "Card not found in PSA database" });
+    }
+
+    // Call Card Hedge
     const searchString = `${psaData.Cert.Year} ${psaData.Cert.Brand} ${psaData.Cert.Subject} PSA ${psaData.Cert.CardGrade}`;
+    
     const chResponse = await axios.get(
       `https://api.cardhedge.com/v1/sales/search`, 
       { 
@@ -59,9 +62,7 @@ export default async function handler(req, res) {
     );
     const salesData = chResponse.data.data || [];
 
-    // ---------------------------------------------------------
-    // STEP C: Save to Cache (Upsert)
-    // ---------------------------------------------------------
+    // --- 3. SAVE TO CACHE ---
     await supabase.from('cached_cards').upsert({
       cert_id: cert,
       card_data: psaData,
@@ -69,7 +70,6 @@ export default async function handler(req, res) {
       last_updated: new Date().toISOString()
     });
 
-    // Return Fresh Data
     return res.status(200).json({ 
       source: 'api', 
       psa: psaData, 
@@ -77,7 +77,11 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Server Error', details: error.message });
+    console.error("Backend Error:", error.message);
+    // Return the actual error to the frontend so you can see it in the app
+    return res.status(500).json({ 
+        error: 'Backend Error', 
+        details: error.response ? error.response.data : error.message 
+    });
   }
 }
