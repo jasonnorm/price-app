@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>PSA Scanner v23 (Live Data Fix)</title>
+    <title>PSA Scanner (Production)</title>
     
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -11,20 +11,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="style.css"> <style>
-        html, body { height: 100%; margin: 0; background: #000; overflow: hidden; font-family: 'Inter', sans-serif; }
-        #camera-feed { position: fixed; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
-        .scan-overlay { position: absolute; top: 35%; left: 50%; transform: translate(-50%, -50%); width: 85%; max-width: 350px; aspect-ratio: 3/4; border-radius: 12px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.85); z-index: 10; pointer-events: none; }
-        .scan-line { width: 100%; height: 2px; background: #eab308; position: absolute; top: 10%; box-shadow: 0 0 20px #eab308; animation: scanMove 3s infinite ease-in-out; }
-        @keyframes scanMove { 0% {top: 5%; opacity: 0;} 100% {top: 95%; opacity: 0;} }
-        #processing-ui { position: fixed; inset: 0; background: #000; z-index: 50; display: none; flex-direction: column; align-items: center; justify-content: center; }
-        .digital-readout { font-family: 'Courier New', monospace; font-size: 2.5rem; font-weight: bold; color: #eab308; letter-spacing: 4px; text-shadow: 0 0 15px rgba(234, 179, 8, 0.5); }
-        #result-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #111827; z-index: 100; transform: translateY(110%); transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1); display: flex; flex-direction: column; }
-        #result-modal.open { transform: translateY(0); }
-        .glass-panel { background: rgba(31, 41, 55, 0.6); backdrop-filter: blur(10px); border: 1px solid rgba(75, 85, 99, 0.5); }
-        .tooltip-trigger:hover .tooltip-content { display: block; }
-        .tooltip-content { display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); width: 220px; padding: 10px; margin-bottom: 8px; background: rgba(0,0,0,0.98); border: 1px solid #eab308; border-radius: 8px; font-size: 11px; line-height: 1.4; color: #fff; z-index: 50; pointer-events: none; text-align: center; }
-    </style>
+    
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
@@ -161,10 +149,6 @@
     </div>
 
     <script>
-        // --- KEYS CONFIGURATION ---
-        const PSA_TOKEN = "PASTE_YOUR_PSA_TOKEN_HERE"; 
-        const CH_KEY = "PASTE_YOUR_CARD_HEDGE_KEY_HERE";
-
         const Platforms = { EBAY: { name: 'eBay', hex: '#3b82f6' }, GOLDIN: { name: 'Goldin', hex: '#eab308' }, PWCC: { name: 'PWCC', hex: '#818cf8' }, HERITAGE: { name: 'Heritage', hex: '#ef4444' } };
         const video = document.getElementById('camera-feed');
         const canvas = document.getElementById('capture-canvas');
@@ -196,62 +180,39 @@
             document.getElementById('loading-stage').style.display = 'none';
             document.getElementById('reveal-stage').style.display = 'flex';
             await typeWriterEffect(cert); 
-            fetchRealData(cert); // TRIGGER THE REAL DATA FETCH
+            
+            // --- NEW: VERCEL BACKEND CONNECTION ---
+            fetchRealData(cert); 
         }
 
-        // --- FETCH REAL DATA ---
         async function fetchRealData(cert) {
             const loadingText = document.getElementById('loading-text');
-            loadingText.innerText = "FETCHING PSA DATA...";
+            loadingText.innerText = "CONTACTING SERVER...";
             
             try {
-                // 1. PSA Lookup
-                const psaResponse = await fetch(`https://api.psacard.com/publicapi/cert/GetByCertNumber/${cert}`, {
-                    method: 'GET',
-                    headers: { 'Authorization': `Bearer ${PSA_TOKEN}` }
-                });
+                // CALL VERCEL BACKEND (Assuming you deployed to /api/scan)
+                const response = await fetch(`/api/scan?cert=${cert}`);
 
-                let psaData = null;
-                if (psaResponse.ok) {
-                    psaData = await psaResponse.json();
-                } else {
-                    console.log("PSA Fetch Failed - Using Mock Details");
-                    // Mock PSA Structure for Fallback
-                    psaData = { Cert: { Year: 1952, Brand: "Topps", Subject: "Mickey Mantle", CardNumber: "311", Variety: "Base", CardGrade: "2.5", PopulationHigher: 1240 } };
-                }
-
-                // 2. Sales Lookup (Card Hedge)
-                loadingText.innerText = "FINDING SALES...";
-                // Construct search: "1952 Topps Mickey Mantle PSA 2.5"
-                const searchString = `${psaData.Cert.Year} ${psaData.Cert.Brand} ${psaData.Cert.Subject} PSA ${psaData.Cert.CardGrade}`;
+                if (!response.ok) throw new Error("Server connection failed");
                 
-                const chResponse = await fetch(`https://api.cardhedge.com/v1/sales/search?q=${encodeURIComponent(searchString)}`, {
-                    method: 'GET',
-                    headers: { 'X-API-KEY': CH_KEY }
-                });
+                const result = await response.json();
 
-                let salesData = [];
-                if (chResponse.ok) {
-                    const chJson = await chResponse.json();
-                    salesData = chJson.data || [];
-                }
-
-                populateDashboard(cert, psaData, salesData);
+                // If successful, pass real data. 'result.psa' and 'result.sales' come from your backend.
+                populateDashboard(cert, result.psa, result.sales);
 
             } catch (err) {
-                console.error("Critical API Error, defaulting to Simulation Mode", err);
-                // Fallback to purely simulated data if networking fails entirely
+                console.warn("Backend unavailable or failed. Switching to Simulation Mode.", err);
+                // Fallback: Use null to trigger the "Mantle Generator" in populateDashboard
                 populateDashboard(cert, null, []);
             }
         }
 
-        // --- DASHBOARD LOGIC (The Fix: Using `externalSales` arg) ---
         function populateDashboard(cert, psa, externalSales) {
             document.getElementById('processing-ui').style.display = 'none';
             document.getElementById('header-cert').innerText = "#" + cert;
             document.getElementById('result-modal').classList.add('open');
 
-            // 1. DETERMINE DATA SOURCE
+            // 1. DATA SOURCE LOGIC
             let dataSource = "SIMULATION";
             let badgeClass = "text-yellow-500 border-yellow-500";
 
@@ -263,21 +224,20 @@
                 masterSalesData = externalSales.map(s => ({
                     x: new Date(s.date).toLocaleDateString(),
                     y: s.price,
-                    platform: { name: s.platform || 'Unknown', hex: '#fff' }, // simplified
+                    platform: { name: s.platform || 'Unknown', hex: '#fff' }, 
                     dateObj: new Date(s.date)
                 })).sort((a,b) => a.dateObj - b.dateObj);
 
             } else {
-                // FALLBACK: Use the "Mantle Generator"
+                // FALLBACK TO SIMULATION
                 masterSalesData = generateMantleMasterData();
             }
 
-            // Update Badge
             const badgeEl = document.getElementById('data-source-badge');
             badgeEl.innerText = dataSource;
             badgeEl.className = `ml-2 text-[9px] font-bold px-2 py-0.5 rounded border ${badgeClass}`;
 
-            // 2. FILL CARD DETAILS (If PSA data exists, use it. Else hardcode Mantle)
+            // 2. FILL CARD DETAILS
             if (psa && psa.Cert) {
                 const info = psa.Cert;
                 document.getElementById('card-title').innerText = `${info.Year} ${info.Brand} ${info.Subject} #${info.CardNumber}`;
@@ -285,43 +245,36 @@
                 document.getElementById('card-grade').innerText = `PSA ${info.CardGrade}`;
                 document.getElementById('card-pop').innerText = `Pop: ${info.PopulationHigher || 'N/A'}`;
             } else {
-                // Hardcoded Mantle Fallback
                 document.getElementById('card-title').innerText = "1952 Topps Mickey Mantle #311";
                 document.getElementById('card-set').innerText = "Base";
                 document.getElementById('card-grade').innerText = "PSA 2.5";
                 document.getElementById('card-pop').innerText = "Pop: 1,240";
             }
 
-            // 3. RUN ANALYTICS (Works for both Live and Simulated data)
+            // 3. ANALYTICS
             const cutoff90 = new Date(); cutoff90.setDate(cutoff90.getDate() - 90);
             const data90 = masterSalesData.filter(s => s.dateObj >= cutoff90);
 
-            // Volatility
             const score30 = calculateVolScore(masterSalesData, 30);
             updateVolUI('30', score30);
             updateVolUI('60', calculateVolScore(masterSalesData, 60));
             updateVolUI('90', calculateVolScore(masterSalesData, 90));
 
-            // Momentum Range
             const last5 = masterSalesData.slice(-5).map(s => s.y);
             const avg = last5.reduce((a,b)=>a+b,0)/last5.length;
             document.getElementById('comp-low').innerText = "$" + Math.floor(avg * 0.9).toLocaleString();
             document.getElementById('comp-high').innerText = "$" + Math.floor(avg * 1.15).toLocaleString();
 
-            // Last Sale
             const lastSale = masterSalesData[masterSalesData.length - 1];
             if(lastSale) {
                 document.getElementById('last-sale-price').innerText = "$" + lastSale.y.toLocaleString();
-                // Simple icon logic
                 const iconEl = document.getElementById('last-sale-icon');
                 iconEl.className = 'fa-solid fa-gavel text-xs'; 
             }
 
-            // AI Signal
             updateAiSignal(masterSalesData, score30);
 
-            // Render Charts
-            renderChart(data90.length > 0 ? data90 : masterSalesData.slice(-20)); // Show *something*
+            renderChart(data90.length > 0 ? data90 : masterSalesData.slice(-20));
             renderDistributionChart(masterSalesData);
             renderList(masterSalesData.slice().reverse().slice(0, 15));
         }
