@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>PSA Scanner v28 (Self-Contained)</title>
+    <title>PSA Scanner v29 (Graceful Fail)</title>
     
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -16,7 +16,6 @@
         html, body { height: 100%; margin: 0; background: #000; overflow: hidden; font-family: 'Inter', sans-serif; }
         #camera-feed { position: fixed; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
         
-        /* Debug Console */
         #debug-console {
             position: fixed; bottom: 0; left: 0; width: 100%; height: 20%;
             background: rgba(0, 0, 0, 0.9); border-top: 2px solid #ef4444;
@@ -28,7 +27,6 @@
         .log-success { color: #4ade80; }
         .log-info { color: #60a5fa; }
 
-        /* Scanner UI */
         .scan-overlay { position: absolute; top: 35%; left: 50%; transform: translate(-50%, -50%); width: 85%; max-width: 350px; aspect-ratio: 3/4; border-radius: 12px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.85); z-index: 10; pointer-events: none; }
         .scan-line { width: 100%; height: 2px; background: #eab308; position: absolute; top: 10%; box-shadow: 0 0 20px #eab308; animation: scanMove 3s infinite ease-in-out; }
         @keyframes scanMove { 0% {top: 5%; opacity: 0;} 100% {top: 95%; opacity: 0;} }
@@ -36,12 +34,9 @@
         #processing-ui { position: fixed; inset: 0; background: #000; z-index: 50; display: none; flex-direction: column; align-items: center; justify-content: center; }
         .digital-readout { font-family: 'Courier New', monospace; font-size: 2.5rem; font-weight: bold; color: #eab308; letter-spacing: 4px; text-shadow: 0 0 15px rgba(234, 179, 8, 0.5); }
         
-        /* Modal & Glass */
         #result-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #111827; z-index: 100; transform: translateY(110%); transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1); display: flex; flex-direction: column; }
         #result-modal.open { transform: translateY(0); }
         .glass-panel { background: rgba(31, 41, 55, 0.6); backdrop-filter: blur(10px); border: 1px solid rgba(75, 85, 99, 0.5); }
-        .tooltip-trigger:hover .tooltip-content { display: block; }
-        .tooltip-content { display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); width: 220px; padding: 10px; margin-bottom: 8px; background: rgba(0,0,0,0.98); border: 1px solid #eab308; border-radius: 8px; font-size: 11px; line-height: 1.4; color: #fff; z-index: 50; pointer-events: none; text-align: center; }
     </style>
 </head>
 <body>
@@ -93,12 +88,13 @@
     <div id="result-modal">
         <div class="bg-gray-900 border-b border-gray-800 px-5 py-4 flex justify-between items-center z-50 sticky top-0 shadow-xl">
             <div class="flex items-center gap-2">
-                <span class="bg-yellow-600 text-black text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">Vintage</span>
-                <span id="header-cert" class="text-gray-400 font-mono text-sm">#--------</span>
-                <span id="data-source-badge" class="ml-2 text-[9px] font-bold px-2 py-0.5 rounded border">--</span>
+                <span id="badge-live" class="bg-green-500 text-black text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider hidden">LIVE DATA</span>
+                <span id="badge-partial" class="bg-yellow-500 text-black text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider hidden">NO SALES</span>
+                <span id="badge-sim" class="bg-blue-500 text-black text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider hidden">SIMULATION</span>
+                <span id="header-cert" class="text-gray-400 font-mono text-sm ml-2">#--------</span>
             </div>
+            
             <div class="flex items-center gap-3">
-                <button onclick="downloadReport()" class="w-8 h-8 bg-blue-600 rounded-full text-white hover:bg-blue-500 transition flex items-center justify-center shadow-lg"><i class="fas fa-download text-sm"></i></button>
                 <button onclick="closeModal()" class="w-8 h-8 bg-gray-800 rounded-full text-white hover:bg-gray-700 transition flex items-center justify-center"><i class="fas fa-times"></i></button>
             </div>
         </div>
@@ -106,7 +102,9 @@
         <div id="report-content" class="flex-1 overflow-y-auto p-5 space-y-6 pb-20 bg-[#111827]">
             
             <div class="flex gap-4 items-start">
-                <img id="card-image" src="https://dyn1.heritagestatic.com/lf?set=path%5B2%2F1%2F5%2F7%2F2157529%5D&call=url%5Bfile%3Aproduct.chain%5D" crossorigin="anonymous" class="w-24 rounded-lg shadow-2xl border border-gray-700">
+                <div class="w-24 h-32 bg-gray-800 rounded-lg flex items-center justify-center border border-gray-700 shadow-2xl">
+                    <i class="fas fa-image text-gray-600 text-3xl"></i>
+                </div>
                 <div class="flex-1">
                     <h1 id="card-title" class="text-xl font-bold text-white leading-tight mb-1">Loading...</h1>
                     <div class="flex items-center gap-2 mb-2">
@@ -141,40 +139,12 @@
                 </div>
             </div>
 
-            <div class="glass-panel p-4 rounded-xl border border-gray-700 relative overflow-hidden">
-                <div id="ai-bg-glow" class="absolute inset-0 opacity-20"></div>
-                <div class="flex justify-between items-start relative z-10">
-                    <div>
-                        <div class="text-gray-400 text-[10px] font-bold uppercase tracking-wide mb-1 flex items-center gap-1"><i class="fas fa-robot text-blue-400"></i> AI Assessment</div>
-                        <h2 id="ai-signal-title" class="text-2xl font-black text-white italic tracking-tighter leading-none mb-1">--</h2>
-                        <p id="ai-signal-desc" class="text-[11px] text-gray-300 max-w-[200px] leading-relaxed">Analyzing...</p>
-                    </div>
-                    <div class="flex flex-col items-center justify-center bg-gray-900/80 rounded-lg p-2 border border-gray-600 w-16 h-16 backdrop-blur">
-                        <i id="ai-signal-icon" class="text-2xl mb-1"></i><span id="ai-signal-score" class="text-[9px] font-bold text-gray-400">--/100</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="glass-panel p-3 rounded-xl border border-gray-700">
-                <div class="flex items-center gap-1 mb-3">
-                    <div class="text-gray-400 text-[10px] font-bold uppercase tracking-wide border-b border-dashed border-gray-600">Volatility Radar</div>
-                    <i class="fas fa-circle-info text-[10px] text-blue-500"></i>
-                </div>
-                <div class="grid grid-cols-3 gap-2">
-                    <div class="bg-gray-900/50 rounded-lg p-2 text-center border border-gray-700 transition-colors" id="vol-box-30"><div class="text-[9px] text-gray-500 font-bold uppercase mb-1">30 Day</div><div class="text-xl font-bold text-white" id="vol-score-30">--</div><div class="h-1 bg-gray-700 rounded-full mt-1 overflow-hidden"><div id="vol-bar-30" class="h-full w-0 transition-all duration-500"></div></div></div>
-                    <div class="bg-gray-900/50 rounded-lg p-2 text-center border border-gray-700 transition-colors" id="vol-box-60"><div class="text-[9px] text-gray-500 font-bold uppercase mb-1">60 Day</div><div class="text-xl font-bold text-white" id="vol-score-60">--</div><div class="h-1 bg-gray-700 rounded-full mt-1 overflow-hidden"><div id="vol-bar-60" class="h-full w-0 transition-all duration-500"></div></div></div>
-                    <div class="bg-gray-900/50 rounded-lg p-2 text-center border border-gray-700 transition-colors" id="vol-box-90"><div class="text-[9px] text-gray-500 font-bold uppercase mb-1">90 Day</div><div class="text-xl font-bold text-white" id="vol-score-90">--</div><div class="h-1 bg-gray-700 rounded-full mt-1 overflow-hidden"><div id="vol-bar-90" class="h-full w-0 transition-all duration-500"></div></div></div>
-                </div>
-            </div>
-
             <div class="glass-panel p-4 rounded-xl border border-gray-700">
                 <div class="flex justify-between items-center mb-1"><h3 class="text-white text-sm font-bold">Price Trend</h3></div>
-                <div class="h-64 w-full"><canvas id="interactiveChart"></canvas></div>
-            </div>
-
-            <div class="glass-panel p-4 rounded-xl border border-gray-700">
-                <div class="flex justify-between items-center mb-1"><h3 class="text-white text-sm font-bold">Sales Distribution</h3></div>
-                <div class="h-64 w-full"><canvas id="distributionChart"></canvas></div>
+                <div class="h-64 w-full relative">
+                    <canvas id="interactiveChart"></canvas>
+                    <div id="no-data-msg" class="absolute inset-0 flex items-center justify-center text-gray-500 text-xs font-mono hidden">NO SALES DATA AVAILABLE</div>
+                </div>
             </div>
 
             <div><h3 class="text-gray-500 text-xs font-bold uppercase mb-3 px-1">Transactions</h3><div id="sales-list" class="space-y-2"></div></div>
@@ -186,9 +156,8 @@
         const video = document.getElementById('camera-feed');
         const canvas = document.getElementById('capture-canvas');
         const ctx = canvas.getContext('2d');
-        let chartInstance = null; let distChartInstance = null; let masterSalesData = [];
+        let chartInstance = null; let masterSalesData = [];
 
-        // Debug Logger
         function log(msg, type = 'info') {
             const el = document.getElementById('log-output');
             const div = document.createElement('div');
@@ -226,17 +195,13 @@
             fetchRealData(cert); 
         }
 
-        // --- FETCH REAL DATA (Calls /api/scan) ---
         async function fetchRealData(cert) {
             const loadingText = document.getElementById('loading-text');
             loadingText.innerText = "CONTACTING SERVER...";
             
             try {
-                // Call Vercel Backend
                 const response = await fetch(`/api/scan?cert=${cert}`);
-
                 if (!response.ok) throw new Error(`Backend Error: ${response.status}`);
-                
                 const result = await response.json();
                 
                 log("Data received from Backend", "success");
@@ -245,7 +210,6 @@
             } catch (err) {
                 log(`Server Connection Failed: ${err.message}`, "error");
                 log("Switching to Simulation Mode...", "info");
-                // Fallback to Simulation
                 populateDashboard(cert, null, []);
             }
         }
@@ -255,80 +219,128 @@
             document.getElementById('header-cert').innerText = "#" + cert;
             document.getElementById('result-modal').classList.add('open');
 
-            let dataSource = "SIMULATION";
-            let badgeClass = "text-yellow-500 border-yellow-500";
+            // Reset Badges
+            document.getElementById('badge-live').classList.add('hidden');
+            document.getElementById('badge-partial').classList.add('hidden');
+            document.getElementById('badge-sim').classList.add('hidden');
+            document.getElementById('no-data-msg').classList.add('hidden');
 
-            if (externalSales && externalSales.length > 0) {
-                dataSource = "LIVE DATA";
-                badgeClass = "text-green-400 border-green-400 shadow-[0_0_10px_rgba(74,222,128,0.3)]";
+            let cardData = {};
+            
+            // --- SCENARIO 1: WE HAVE REAL PSA DATA ---
+            if (psa && (psa.Cert || psa.PSACert)) {
+                const info = psa.PSACert || psa.Cert;
                 
-                masterSalesData = externalSales.map(s => ({
-                    x: new Date(s.date).toLocaleDateString(),
-                    y: s.price,
-                    platform: { name: s.platform || 'Unknown', hex: '#fff' }, 
-                    dateObj: new Date(s.date)
-                })).sort((a,b) => a.dateObj - b.dateObj);
-
-            } else {
-                // Fallback Generator
-                masterSalesData = generateMantleMasterData();
-            }
-
-            const badgeEl = document.getElementById('data-source-badge');
-            badgeEl.innerText = dataSource;
-            badgeEl.className = `ml-2 text-[9px] font-bold px-2 py-0.5 rounded border ${badgeClass}`;
-
-            if (psa && psa.Cert) {
-                const info = psa.Cert;
-                document.getElementById('card-title').innerText = `${info.Year} ${info.Brand} ${info.Subject} #${info.CardNumber}`;
+                // Show Card Details
+                document.getElementById('card-title').innerText = `${info.Year} ${info.Brand} ${info.Subject}`;
                 document.getElementById('card-set').innerText = info.Variety || "Base";
                 document.getElementById('card-grade').innerText = `PSA ${info.CardGrade}`;
-                document.getElementById('card-pop').innerText = `Pop: ${info.PopulationHigher || 'N/A'}`;
-            } else {
-                document.getElementById('card-title').innerText = "1952 Topps Mickey Mantle #311";
+                document.getElementById('card-pop').innerText = `Pop: ${info.TotalPopulation || info.PopulationHigher || 'N/A'}`;
+
+                // Handle Sales
+                if (externalSales && externalSales.length > 0) {
+                    // Full Live Mode
+                    document.getElementById('badge-live').classList.remove('hidden');
+                    processSalesData(externalSales);
+                } else {
+                    // Partial Mode (Real Card, No Sales)
+                    document.getElementById('badge-partial').classList.remove('hidden');
+                    document.getElementById('no-data-msg').classList.remove('hidden');
+                    clearSalesData(); // Clear charts/numbers
+                }
+            } 
+            // --- SCENARIO 2: TOTAL FAILURE (SIMULATION) ---
+            else {
+                document.getElementById('badge-sim').classList.remove('hidden');
+                document.getElementById('card-title').innerText = "1952 Topps Mickey Mantle (SIMULATION)";
                 document.getElementById('card-set').innerText = "Base";
                 document.getElementById('card-grade').innerText = "PSA 2.5";
                 document.getElementById('card-pop').innerText = "Pop: 1,240";
+                
+                // Generate Fake Data
+                const simData = generateMantleMasterData();
+                processSalesData(simData);
             }
+        }
 
-            const cutoff90 = new Date(); cutoff90.setDate(cutoff90.getDate() - 90);
-            const data90 = masterSalesData.filter(s => s.dateObj >= cutoff90);
+        function clearSalesData() {
+            document.getElementById('comp-low').innerText = "--";
+            document.getElementById('comp-high').innerText = "--";
+            document.getElementById('last-sale-price').innerText = "No Sales";
+            document.getElementById('overall-status').innerText = "NO DATA";
+            document.getElementById('sales-list').innerHTML = "<div class='text-gray-500 text-xs text-center p-4'>No public sales found for this specific card/grade.</div>";
+            if(chartInstance) chartInstance.destroy();
+        }
 
-            const score30 = calculateVolScore(masterSalesData, 30);
-            updateVolUI('30', score30);
-            updateVolUI('60', calculateVolScore(masterSalesData, 60));
-            updateVolUI('90', calculateVolScore(masterSalesData, 90));
+        function processSalesData(salesRaw) {
+            masterSalesData = salesRaw.map(s => ({
+                x: new Date(s.date || s.dateObj).toLocaleDateString(),
+                y: s.price || s.y,
+                platform: s.platform || { name: 'Unknown', hex: '#fff' },
+                dateObj: new Date(s.date || s.dateObj)
+            })).sort((a,b) => a.dateObj - b.dateObj);
 
+            // Calculate Stats
             const last5 = masterSalesData.slice(-5).map(s => s.y);
             const avg = last5.reduce((a,b)=>a+b,0)/last5.length;
+            const lastSale = masterSalesData[masterSalesData.length - 1];
+
             document.getElementById('comp-low').innerText = "$" + Math.floor(avg * 0.9).toLocaleString();
             document.getElementById('comp-high').innerText = "$" + Math.floor(avg * 1.15).toLocaleString();
+            document.getElementById('last-sale-price').innerText = "$" + lastSale.y.toLocaleString();
+            document.getElementById('overall-status').innerText = `${masterSalesData.length} SALES`;
 
-            const lastSale = masterSalesData[masterSalesData.length - 1];
-            if(lastSale) {
-                document.getElementById('last-sale-price').innerText = "$" + lastSale.y.toLocaleString();
-                document.getElementById('last-sale-icon').className = 'fa-solid fa-gavel text-xs'; 
-            }
-
-            updateAiSignal(masterSalesData, score30);
-
-            renderChart(data90.length > 0 ? data90 : masterSalesData.slice(-20));
-            renderDistributionChart(masterSalesData);
+            renderChart(masterSalesData);
             renderList(masterSalesData.slice().reverse().slice(0, 15));
         }
 
-        // Helpers (Math, UI, Simulation)
-        function calculateVolScore(sales, days) { const cutoffDate = new Date(); cutoffDate.setDate(cutoffDate.getDate() - days); const subset = sales.filter(s => s.dateObj >= cutoffDate); if(subset.length < 3) return 5; const prices = subset.map(s => s.y); const mean = prices.reduce((a,b)=>a+b,0) / prices.length; const variance = prices.reduce((a,b)=>a+Math.pow(b-mean,2),0) / prices.length; const cov = (Math.sqrt(variance) / mean) * 100; let score = Math.ceil(cov / 3); if(score < 1) score = 1; if(score > 10) score = 10; return score; }
-        function updateVolUI(idSuffix, score) { const elBar = document.getElementById(`vol-bar-${idSuffix}`); const elScore = document.getElementById(`vol-score-${idSuffix}`); const elBox = document.getElementById(`vol-box-${idSuffix}`); elScore.innerText = score + "/10"; elBar.style.width = (score * 10) + "%"; elBar.className = "h-full w-0 transition-all duration-500"; elBox.className = "bg-gray-900/50 rounded-lg p-2 text-center border transition-colors"; if(score <= 4) { elBar.classList.add('bg-green-500'); elBox.classList.add('border-green-900'); elScore.classList.add('text-green-400'); } else if (score <= 8) { elBar.classList.add('bg-yellow-500'); elBox.classList.add('border-yellow-900'); elScore.classList.add('text-yellow-400'); } else { elBar.classList.add('bg-orange-600'); elBox.classList.add('border-orange-900'); elScore.classList.add('text-orange-500'); } }
-        function updateAiSignal(sales, volScore) { const recentSales = sales.slice(-5); const startPrice = sales[0].y; const endPrice = recentSales[recentSales.length-1].y; const changePct = ((endPrice - startPrice) / startPrice) * 100; const elTitle = document.getElementById('ai-signal-title'); const elDesc = document.getElementById('ai-signal-desc'); const elScore = document.getElementById('ai-signal-score'); const elIcon = document.getElementById('ai-signal-icon'); const elGlow = document.getElementById('ai-bg-glow'); let signal = ""; let confidence = 0; let themeClass = ""; let iconClass = ""; let desc = ""; if (changePct > 20 && volScore >= 7) { signal = "TAKE PROFIT"; confidence = 88; themeClass = "text-red-500"; iconClass = "fas fa-hand-holding-dollar text-red-500"; elGlow.className = "absolute inset-0 opacity-20 bg-gradient-to-r from-transparent via-red-600 to-transparent"; desc = "Market is overheated. Historic volatility suggests a pullback is imminent."; } else if (changePct > 5) { signal = "HOLD"; confidence = 92; themeClass = "text-yellow-400"; iconClass = "fas fa-scale-balanced text-yellow-400"; elGlow.className = "absolute inset-0 opacity-20 bg-gradient-to-r from-transparent via-yellow-500 to-transparent"; desc = "Strong uptrend with manageable volatility. Ride the wave."; } else { signal = "ACCUMULATE"; confidence = 74; themeClass = "text-blue-400"; iconClass = "fas fa-layer-group text-blue-400"; elGlow.className = "absolute inset-0 opacity-20 bg-gradient-to-r from-transparent via-blue-500 to-transparent"; desc = "Momentum is building. Volume suggests a breakout may be forming."; } elTitle.innerText = signal; elTitle.className = `text-3xl font-black italic tracking-tighter leading-none mb-1 ${themeClass}`; elDesc.innerText = desc; elScore.innerText = confidence + "/100"; elIcon.className = `${iconClass} text-2xl mb-1`; }
-        function generateMantleMasterData() { let data = []; const today = new Date(); const platformKeys = [{name: 'eBay', hex: '#3b82f6'}, {name: 'Goldin', hex: '#eab308'}, {name: 'PWCC', hex: '#818cf8'}, {name: 'Heritage', hex: '#ef4444'}]; const startPrice = 48000; const endPrice = 58000; const dailyGrowth = (endPrice - startPrice) / 365; for (let i = 365; i >= 0; i--) { if (Math.random() > 0.82) { const date = new Date(); date.setDate(today.getDate() - i); let currentBase = startPrice + (dailyGrowth * (365 - i)); let eyeAppealFactor = 0.8 + (Math.random() * 0.45); let finalPrice = Math.floor(currentBase * eyeAppealFactor); let pIndex = Math.floor(Math.random() * 4); data.push({ x: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), y: finalPrice, dateObj: date, platform: platformKeys[pIndex], url: '#' }); } } return data.sort((a,b) => a.dateObj - b.dateObj); }
-        function renderChart(sales) { const ctx = document.getElementById('interactiveChart').getContext('2d'); if(chartInstance) chartInstance.destroy(); const gradient = ctx.createLinearGradient(0, 0, 0, 300); gradient.addColorStop(0, 'rgba(234, 179, 8, 0.2)'); gradient.addColorStop(1, 'rgba(234, 179, 8, 0.0)'); chartInstance = new Chart(ctx, { type: 'line', data: { labels: sales.map(s => s.x), datasets: [{ label: 'Price', data: sales.map(s => s.y), borderColor: '#eab308', borderWidth: 1, tension: 0.3, fill: true, backgroundColor: gradient, pointRadius: 3 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#333' }, ticks: { color: '#666' } } } } }); }
-        function renderDistributionChart(sales) { const ctx = document.getElementById('distributionChart').getContext('2d'); if(distChartInstance) distChartInstance.destroy(); const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; let monthlyBuckets = {}; sales.forEach(s => { const mKey = monthNames[s.dateObj.getMonth()]; if(!monthlyBuckets[mKey]) monthlyBuckets[mKey] = []; monthlyBuckets[mKey].push(s.y); }); const wickData = Object.keys(monthlyBuckets).map(m => { const vals = monthlyBuckets[m]; return { x: m, y: [Math.min(...vals), Math.max(...vals)] }; }); const scatterData = sales.map(s => ({ x: monthNames[s.dateObj.getMonth()], y: s.y })); distChartInstance = new Chart(ctx, { data: { labels: Object.keys(monthlyBuckets), datasets: [{ type: 'bar', label: 'Range', data: wickData, backgroundColor: '#4b5563', barThickness: 2, order: 2 }, { type: 'scatter', label: 'Sale', data: scatterData, backgroundColor: '#eab308', borderColor: 'black', borderWidth: 1, pointRadius: 3, order: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { color: '#9ca3af', font: { size: 10 } } }, y: { grid: { color: '#333' }, ticks: { color: '#666', callback: v => '$'+v/1000+'k' } } } } }); }
-        function renderList(sales) { const list = document.getElementById('sales-list'); list.innerHTML = ''; sales.forEach(s => { list.innerHTML += `<div class="flex justify-between items-center bg-gray-800/40 p-3 rounded-lg border border-gray-700 mb-2"><div class="flex items-center gap-3"><div class="text-white text-xs font-bold">${s.platform.name || 'Sold'}</div><div class="text-gray-500 text-[10px]">${s.x}</div></div><div class="text-white font-mono font-bold">$${s.y.toLocaleString()}</div></div>`; }); }
+        // --- CHARTING & HELPERS ---
+        function renderChart(sales) { 
+            const ctx = document.getElementById('interactiveChart').getContext('2d'); 
+            if(chartInstance) chartInstance.destroy(); 
+            const gradient = ctx.createLinearGradient(0, 0, 0, 300); 
+            gradient.addColorStop(0, 'rgba(234, 179, 8, 0.2)'); 
+            gradient.addColorStop(1, 'rgba(234, 179, 8, 0.0)'); 
+            
+            chartInstance = new Chart(ctx, { 
+                type: 'line', 
+                data: { 
+                    labels: sales.map(s => s.x), 
+                    datasets: [{ 
+                        label: 'Price', 
+                        data: sales.map(s => s.y), 
+                        borderColor: '#eab308', 
+                        borderWidth: 1, 
+                        tension: 0.3, 
+                        fill: true, 
+                        backgroundColor: gradient, 
+                        pointRadius: 3 
+                    }] 
+                }, 
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    plugins: { legend: { display: false } }, 
+                    scales: { 
+                        x: { display: false }, 
+                        y: { grid: { color: '#333' }, ticks: { color: '#666' } } 
+                    } 
+                } 
+            }); 
+        }
+
+        function renderList(sales) { 
+            const list = document.getElementById('sales-list'); 
+            list.innerHTML = ''; 
+            sales.forEach(s => { 
+                list.innerHTML += `<div class="flex justify-between items-center bg-gray-800/40 p-3 rounded-lg border border-gray-700 mb-2"><div class="flex items-center gap-3"><div class="text-white text-xs font-bold">${s.platform.name || 'Sold'}</div><div class="text-gray-500 text-[10px]">${s.x}</div></div><div class="text-white font-mono font-bold">$${s.y.toLocaleString()}</div></div>`; 
+            }); 
+        }
+
+        function generateMantleMasterData() { let data = []; const today = new Date(); const platformKeys = [{name: 'eBay', hex: '#3b82f6'}, {name: 'Goldin', hex: '#eab308'}]; const startPrice = 48000; const endPrice = 58000; const dailyGrowth = (endPrice - startPrice) / 365; for (let i = 365; i >= 0; i--) { if (Math.random() > 0.82) { const date = new Date(); date.setDate(today.getDate() - i); let currentBase = startPrice + (dailyGrowth * (365 - i)); let eyeAppealFactor = 0.8 + (Math.random() * 0.45); let finalPrice = Math.floor(currentBase * eyeAppealFactor); let pIndex = Math.floor(Math.random() * 2); data.push({ x: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), y: finalPrice, dateObj: date, platform: platformKeys[pIndex] }); } } return data.sort((a,b) => a.dateObj - b.dateObj); }
         function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
         function typeWriterEffect(text) { return new Promise(r => { const el = document.getElementById('digital-number'); el.innerText = ""; let i=0; const int = setInterval(() => { el.innerText += text.charAt(i++); if(i >= text.length) { clearInterval(int); r(); } }, 70); }); }
         function closeModal() { document.getElementById('result-modal').classList.remove('open'); }
-        function downloadReport() { html2canvas(document.getElementById('report-content')).then(canvas => { const link = document.createElement('a'); link.download = 'Report.png'; link.href = canvas.toDataURL(); link.click(); }); }
     </script>
 </body>
 </html>
